@@ -1,6 +1,6 @@
 # 🛡️ Psych-Sentinel v1.0 | Cognitive SOAR & Reasoning Engine
 
-**Architect:** [Your Name]  
+**Architect:** Raihan Hanif Firdaus
 **Stack:** Vanilla JS, Tailwind CSS, Google AntiGravity, Gemini 1.5 Flash, Turso DB
 
 ---
