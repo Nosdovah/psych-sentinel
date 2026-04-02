@@ -74,11 +74,26 @@
         </div>
       </section>
 
-      <!-- Threat Board -->
+      <!-- Incident Log Console (Center) -->
       <section class="glass-panel flex-1 flex flex-col relative overflow-hidden p-4">
-        <div class="text-xs font-mono text-gray-400 text-center uppercase tracking-[0.2em] mb-4">Live Threat Physics Sandbox</div>
-        <div id="threat-board" class="w-full h-full relative" style="perspective: 1000px;">
-          <!-- Decaying cards -->
+        <div class="text-xs font-mono text-gray-400 text-center uppercase tracking-[0.2em] mb-4">Incident Log Console</div>
+        <div class="absolute top-2 left-4 text-[10px] font-mono text-gray-600 uppercase tracking-tighter">Event_Stream: Active</div>
+        
+        <div class="flex-1 w-full overflow-y-auto pr-2 custom-scrollbar">
+          <table class="w-full text-left font-mono text-[10px] border-separate border-spacing-y-2">
+            <thead class="sticky top-0 bg-ops-bg/80 backdrop-blur-sm z-20 text-gray-500 border-b border-white/5">
+              <tr>
+                <th class="pb-2 font-normal">TIMESTAMP</th>
+                <th class="pb-2 font-normal">INCIDENT_ID</th>
+                <th class="pb-2 font-normal">TTP_CATEGORY</th>
+                <th class="pb-2 font-normal text-center">RISK</th>
+                <th class="pb-2 font-normal text-right">STATUS</th>
+              </tr>
+            </thead>
+            <tbody id="incident-log-body">
+              <!-- Logs hydrate here -->
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -124,8 +139,9 @@
         <div id="sop-content" class="text-sm font-sans mb-6 text-gray-300 border-l-2 border-ops-sop pl-4 space-y-2">
           <!-- AI Steps -->
         </div>
-        <div class="flex justify-end font-mono">
-          <button id="btn-dismiss-sop" class="px-6 py-2 bg-ops-sop text-black font-bold rounded shadow-lg hover:bg-yellow-400 hover:shadow-[0_0_15px_rgba(234,179,8,0.8)] transition-all">RESOLVE TICKET</button>
+        <div class="flex justify-end gap-3 font-mono">
+          <button id="btn-dismiss-sop" class="px-4 py-2 border border-ops-sop text-ops-sop font-bold rounded hover:bg-ops-sop/10 transition-all text-xs uppercase">Dismiss</button>
+          <button id="btn-resolve-sop" class="px-6 py-2 bg-ops-sop text-black font-bold rounded shadow-lg hover:bg-yellow-400 hover:shadow-[0_0_15px_rgba(234,179,8,0.8)] transition-all uppercase text-xs">Resolve Ticket</button>
         </div>
       </div>
     </div>

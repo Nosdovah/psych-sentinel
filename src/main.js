@@ -1,5 +1,5 @@
 // Psych-Sentinel v1.0 Core Engine (SOAR Upgrade)
-import { initDb, saveLog, getHistoricalMetrics } from './db.js';
+import { initDb, saveLog, getHistoricalMetrics, getHistoricalLogs, deleteLog } from './db.js';
 import { generateRemediation } from './ai.js';
 
 // State
@@ -10,14 +10,15 @@ let successCount = 0;
 let errorCount = 0;
 let systemPressure = 0;
 let isLockdown = false;
+let currentIncidentData = null; 
 
-let threats = [];
+let activeThreats = []; // Track active risks for uptime
 let chartInstance = null;
 
 // DOM Elements
 const cliInput = document.getElementById('cli-input');
 const cliLog = document.getElementById('cli-log');
-const threatBoard = document.getElementById('threat-board');
+const incidentLogBody = document.getElementById('incident-log-body');
 const uptimeText = document.getElementById('uptime-text');
 const uptimeRing = document.getElementById('uptime-ring');
 const uptimeGlow = document.getElementById('uptime-glow');
@@ -39,13 +40,81 @@ const sopContent = document.getElementById('sop-content');
 const sopTtpName = document.getElementById('sop-ttp-name');
 const sopRiskBadge = document.getElementById('sop-risk-badge');
 const btnDismissSop = document.getElementById('btn-dismiss-sop');
+const btnResolveSop = document.getElementById('btn-resolve-sop');
+
+// --- SOC Log Logic ---
+
+function renderLogEntry(entry, animate = false) {
+  const row = document.createElement('tr');
+  const typeClass = entry.type === 'success' ? 'success' : (entry.risk_score >= 8 || entry.severity >= 8 ? 'critical' : 'threat');
+  row.className = `log-row ${typeClass} h-10 cursor-pointer active:bg-white/20`;
+  row.id = `log-entry-${entry.id}`;
+  
+  if (animate) {
+    row.classList.add('opacity-0', '-translate-x-4');
+  }
+
+  const date = new Date(entry.timestamp);
+  const timeStr = date.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const idPrefix = entry.type === 'success' ? 'WIN' : 'THM';
+  const incidentIdStr = `${idPrefix}-${entry.id || Math.floor(Math.random()*1000)}`;
+  const risk = entry.risk_score || entry.severity || 0;
+
+  row.innerHTML = `
+    <td class="pl-3 text-gray-500">${timeStr}</td>
+    <td class="font-bold text-ops-accent">${incidentIdStr}</td>
+    <td class="text-gray-300 uppercase">${entry.ttp_category || 'NEUTRAL'}</td>
+    <td class="text-center font-bold ${risk >= 8 ? 'text-ops-threat' : 'text-ops-accent'}">${risk}</td>
+    <td class="pr-3 text-right text-[8px] ${entry.type === 'success' ? 'text-ops-accent' : 'text-ops-threat'} uppercase">${entry.type === 'success' ? 'Validated' : 'Remediated'}</td>
+  `;
+
+  // Track if it's a threat for uptime
+  if (entry.type === 'threat') {
+    activeThreats.push({
+      id: entry.id,
+      initialRisk: risk,
+      currentRisk: risk,
+      timestamp: Date.now()
+    });
+  }
+
+  row.onclick = () => {
+    let playbook = entry.remediation || (entry.remediation_json ? JSON.parse(entry.remediation_json) : ["No historical remediation record found."]);
+    
+    currentIncidentData = {
+        id: entry.id,
+        ttp: entry.ttp_category || entry.ttp,
+        riskScore: risk,
+        remediation: playbook
+    };
+
+    triggerSOP(currentIncidentData, true);
+  };
+
+  if (animate) {
+    incidentLogBody.prepend(row);
+    setTimeout(() => row.classList.remove('opacity-0', '-translate-x-4'), 50);
+  } else {
+    incidentLogBody.appendChild(row);
+  }
+
+  applyOpacityDecay();
+}
+
+function applyOpacityDecay() {
+  const rows = incidentLogBody.querySelectorAll('.log-row');
+  rows.forEach((row, index) => {
+    const decayLambda = 0.15; 
+    const opacity = Math.max(0.1, Math.exp(-decayLambda * index));
+    row.style.opacity = opacity;
+  });
+}
 
 // --- AI Pipeline & SOAR Logic ---
 
 async function processSOAR(text) {
   if (isLockdown) return;
 
-  // 1. Thinking Animation
   systemStatus.innerText = "ANALYZING_PAYLOAD...";
   systemStatus.className = "text-yellow-500 animate-pulse";
   
@@ -63,33 +132,39 @@ async function processSOAR(text) {
   try {
     const result = await generateRemediation(text);
     
-    // 2. Process Result
     systemStatus.innerText = "THREAT_IDENTIFIED";
     systemStatus.className = "text-ops-threat";
 
-    // Update Metrics
     errorCount++;
     updateChart();
 
-    // Spawn Physical Threat
-    spawnThreat(text, result);
+    const incidentId = Date.now().toString().slice(-4);
 
-    // Update Pressure: Pressure = sum (Risk * severity_weight)
-    // We treat each threat as weight 5 for pressure calculation
+    // Spawn SOC Log Entry
+    renderLogEntry({
+      timestamp: new Date().toISOString(),
+      id: incidentId,
+      ttp_category: result.ttp,
+      severity: 5,
+      risk_score: result.riskScore,
+      remediation: result.remediation,
+      type: 'threat'
+    }, true);
+
     const pressureIncrease = result.riskScore * 5;
     updatePressure(pressureIncrease);
 
-    // Show AI SOP Modal
     triggerSOP(result);
 
-    // Persist to Turso
-    await saveLog(text, result.ttp, 5, result.riskScore, systemPressure, 'threat');
+    await saveLog(text, result.ttp, 5, result.riskScore, systemPressure, result.remediation, 'threat');
     logToCLI(`SOAR Artifact generated. TTP: ${result.ttp}. Risk: ${result.riskScore}`, "sys-db");
 
   } catch (err) {
     logToCLI("Reasoning Engine Timeout. Reverting to local heuristic.", "sys-crit");
     systemStatus.innerText = "FALLBACK_MODE";
   }
+
+  updateChart();
 }
 
 function updatePressure(val) {
@@ -103,7 +178,9 @@ function updatePressure(val) {
     pressureFill.classList.replace('bg-ops-accent', 'bg-ops-threat');
     triggerLockdown();
   } else if (systemPressure > 50) {
-    pressureFill.classList.replace('bg-ops-accent', 'bg-yellow-500');
+    if (pressureFill.classList.contains('bg-ops-accent')) {
+        pressureFill.classList.replace('bg-ops-accent', 'bg-yellow-500');
+    }
   }
 }
 
@@ -113,7 +190,7 @@ function triggerLockdown() {
   coolingOverlay.classList.remove('hidden');
   logToCLI("CRITICAL: SYSTEM PRESSURE EXCEEDED 80%. ENTERING COOLING PERIOD.", "sys-crit");
   
-  let secondsLeft = 300; // 5 minutes
+  let secondsLeft = 300; 
   const timer = setInterval(() => {
     secondsLeft--;
     const mins = Math.floor(secondsLeft / 60);
@@ -140,16 +217,54 @@ btnDebugLockout.addEventListener('click', releaseLockdown);
 
 // --- UI Logic ---
 
-function triggerSOP(result) {
+function triggerSOP(result, historical = false) {
   sopTtpName.innerText = `TTP: ${result.ttp}`;
   sopRiskBadge.innerText = `RISK: ${result.riskScore}`;
   sopContent.innerHTML = result.remediation.map(step => `<p class="flex gap-2"><span class="text-ops-sop">→</span> ${step}</p>`).join("");
   
+  if (historical) {
+      btnResolveSop.innerText = "DELETE PERMANENTLY";
+      btnResolveSop.classList.replace('bg-ops-sop', 'bg-ops-threat');
+      btnResolveSop.classList.replace('text-black', 'text-white');
+  } else {
+      btnResolveSop.innerText = "RESOLVE TICKET";
+      btnResolveSop.classList.replace('bg-ops-threat', 'bg-ops-sop');
+      btnResolveSop.classList.replace('text-white', 'text-black');
+  }
+
   sopModal.classList.remove('hidden');
   setTimeout(() => {
     sopCard.classList.remove('opacity-0', 'scale-95', 'translate-y-10');
   }, 10);
 }
+
+btnResolveSop.onclick = async () => {
+    if (currentIncidentData && currentIncidentData.id) {
+        const rowId = currentIncidentData.id;
+        const row = document.getElementById(`log-entry-${rowId}`);
+        if (row) {
+            row.classList.add('opacity-0', 'translate-x-full');
+            setTimeout(() => {
+                row.remove();
+                applyOpacityDecay();
+            }, 600);
+        }
+        
+        // Remove from activeThreats tracking
+        activeThreats = activeThreats.filter(t => t.id != rowId);
+        
+        await deleteLog(rowId);
+        logToCLI(`Incident [${rowId}] resolved and deleted from database.`, "sys-db");
+    }
+
+    sopCard.classList.add('opacity-0', 'scale-95', 'translate-y-10');
+    setTimeout(() => {
+        sopModal.classList.add('hidden');
+        systemStatus.innerText = "SYSTEM_IDLE";
+        systemStatus.className = "text-ops-accent";
+        currentIncidentData = null;
+    }, 500);
+};
 
 btnDismissSop.addEventListener('click', () => {
   sopCard.classList.add('opacity-0', 'scale-95', 'translate-y-10');
@@ -160,52 +275,13 @@ btnDismissSop.addEventListener('click', () => {
   }, 500);
 });
 
-function spawnThreat(text, result) {
-  const id = 'threat-' + Date.now();
-  const el = document.createElement('div');
-  el.id = id;
-  el.className = 'decay-card absolute w-[90%] left-[5%] glass-panel p-4 border border-ops-threat/30 neon-red-glow flex flex-col gap-2 z-10';
-  el.innerHTML = `
-    <div class="flex justify-between items-center font-mono text-xs text-ops-threat uppercase">
-      <span class="font-bold flex items-center gap-2">
-        <div class="w-2 h-2 rounded-full bg-ops-threat animate-ping"></div>
-        ${result.ttp}
-      </span>
-      <span id="sev-${id}">RISK: ${result.riskScore}</span>
-    </div>
-    <div class="text-sm font-sans text-gray-300 italic opacity-80">"${text}"</div>
-  `;
-  threatBoard.appendChild(el);
-
-  threats.push({
-    id,
-    el,
-    initialSeverity: result.riskScore,
-    currentSeverity: result.riskScore,
-    timestamp: Date.now()
-  });
-
-  recalculateUptime();
-}
-
 function physicsLoop() {
   const now = Date.now();
-  threats.forEach((t, index) => {
+  
+  // Update risk decay for uptime
+  activeThreats.forEach(t => {
     const timeElapsed = (now - t.timestamp) / 1000;
-    t.currentSeverity = t.initialSeverity * Math.exp(-lambda * timeElapsed);
-    
-    // UI Update
-    const verticalPos = 100 - (t.currentSeverity / t.initialSeverity * 100); 
-    const opacityPos = Math.max(0, t.currentSeverity / t.initialSeverity);
-    const scalePos = 0.8 + (0.2 * opacityPos);
-    
-    t.el.style.transform = `translateY(${verticalPos * 3}px) scale(${scalePos})`;
-    t.el.style.opacity = opacityPos;
-    
-    if (t.currentSeverity < 0.1) {
-      if (t.el.parentNode) t.el.parentNode.removeChild(t.el);
-      threats.splice(index, 1);
-    }
+    t.currentRisk = t.initialRisk * Math.exp(-lambda * timeElapsed);
   });
 
   recalculateUptime();
@@ -214,17 +290,26 @@ function physicsLoop() {
 
 function recalculateUptime() {
   let penalty = 0;
-  threats.forEach(t => { penalty += t.currentSeverity * 2; });
-  let currentUptime = Math.min(Math.max(100 - penalty + (successCount * 3), 0), 100);
+  // Penalty: 1 risk point = 2% uptime loss (Max risk 10 = 20% loss)
+  activeThreats.forEach(t => { 
+    penalty += t.currentRisk * 3; 
+  });
+  
+  // Offset: Validated wins add buffer
+  let currentUptime = Math.min(Math.max(100 - penalty + (successCount * 0.5), 0), 100);
   uptimePercent = currentUptime;
   
   uptimeText.innerText = uptimePercent.toFixed(1) + '%';
   uptimeRing.style.strokeDashoffset = 176 - (176 * uptimePercent) / 100;
   
-  if (uptimePercent < 50) {
+  if (uptimePercent < 70) {
     uptimeRing.setAttribute('stroke', '#ff3366');
     uptimeText.className = "text-xl font-bold text-ops-threat crt-flicker";
     uptimeGlow.className = "absolute inset-0 bg-ops-threat opacity-20 neon-red-glow";
+  } else if (uptimePercent < 90) {
+    uptimeRing.setAttribute('stroke', '#eab308');
+    uptimeText.className = "text-xl font-bold text-ops-sop";
+    uptimeGlow.className = "absolute inset-0 bg-ops-sop opacity-20 neon-yellow-glow";
   } else {
     uptimeRing.setAttribute('stroke', '#00ffcc');
     uptimeText.className = "text-xl font-bold text-ops-accent";
@@ -265,13 +350,23 @@ btnRecalibrate.addEventListener('click', async () => {
   successCount++;
   updateChart();
   
-  // Celebratory UI
   cliLog.parentElement.classList.add('success-packet-anim');
   setTimeout(() => cliLog.parentElement.classList.remove('success-packet-anim'), 800);
   
   logToCLI("SUCCESS PACKET RECEIVED. Mental Uptime recalibrated.", "sys-info");
-  await saveLog("Success-Drop Recalibration", "Manual-Recal", 0, 0, systemPressure, 'success');
-  updatePressure(-15); // Wins reduce pressure
+  
+  renderLogEntry({
+    timestamp: new Date().toISOString(),
+    id: Date.now().toString().slice(-4),
+    ttp_category: "Manual Recalibration",
+    severity: 0,
+    risk_score: 0,
+    remediation: ["Success dropped into log. Reality validated."],
+    type: 'success'
+  }, true);
+
+  await saveLog("Success-Drop Recalibration", "Manual-Recal", 0, 0, systemPressure, ["Success dropped into log. Reality validated."], 'success');
+  updatePressure(-15); 
 });
 
 btnDemoMode.addEventListener('click', () => { lambda = 0.1; btnDemoMode.className = "px-3 py-1 bg-ops-accent text-black font-bold text-xs rounded"; btnRealMode.className = "px-3 py-1 bg-transparent text-gray-400 font-bold text-xs rounded"; });
@@ -314,6 +409,19 @@ async function boot() {
   systemPressure = Number(historical.lastPressure);
   updatePressure(0);
   
+  const logs = await getHistoricalLogs();
+  logs.forEach(log => {
+      renderLogEntry({
+          id: log.id,
+          timestamp: log.timestamp,
+          ttp_category: log.ttp_category,
+          severity: log.severity,
+          risk_score: log.risk_score,
+          remediation_json: log.remediation_json,
+          type: log.type
+      });
+  });
+
   initChart();
   requestAnimationFrame(physicsLoop);
   logToCLI("ENGINE ROOM SECURE. AWAITING PAYLOADS.", "sys-info");
