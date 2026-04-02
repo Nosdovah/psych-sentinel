@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Psych-Sentinel v1.0 | SOAR</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.js"
+            integrity="sha384-zuFoHkJ6+XzUchVtS39qBWxb+LvdA7aQ/ze8jYdufBf/A1jeuKGDBg4crfxvZAr8"
+            crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="scanline m-0 h-screen w-screen flex flex-col p-4 gap-4 box-border relative">
+    
+    <!-- Cooling Period / Lockdown Overlay -->
+    <div id="cooling-overlay" class="hidden absolute inset-0 z-[100] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center text-center p-8">
+      <div class="w-48 h-48 rounded-full border-2 border-ops-accent flex items-center justify-center relative mb-8">
+        <div class="absolute inset-0 rounded-full bg-ops-accent breathe-circle"></div>
+        <div id="cooling-timer" class="text-4xl font-mono text-ops-accent font-bold">05:00</div>
+      </div>
+      <h1 class="text-3xl font-mono text-ops-accent mb-4 tracking-tighter uppercase">Cooling Period Active</h1>
+      <p class="text-gray-400 max-w-md font-sans mb-8">System pressure exceeded 80%. Logic gates locked to prevent cognitive overflow. Synchronize core with the rhythm above.</p>
+      <button id="btn-debug-lockout" class="text-[10px] text-gray-700 bg-transparent border border-gray-800 px-4 py-1 hover:border-gray-600">DEBUG: BYPASS LOCKOUT</button>
+    </div>
+
+    <!-- Top Nav / Header -->
+    <header class="glass-panel w-full flex justify-between items-center p-4 h-20 shrink-0">
+      <div class="flex items-center gap-4">
+        <div class="font-mono text-ops-accent font-bold text-xl tracking-widest uppercase crt-flicker">Psych-Sentinel <span class="text-sm border border-ops-accent px-1 rounded">v1.0</span></div>
+      </div>
+      
+      <div class="flex flex-col items-center gap-2">
+        <label class="text-xs text-gray-400 font-mono">System Clock Multiplier</label>
+        <div class="flex p-1 bg-black/60 rounded-md gap-1">
+          <button id="btn-demo-mode" class="px-3 py-1 bg-ops-accent text-black font-bold text-xs rounded transition-colors" data-active="true">DEMO (λ≈0.1)</button>
+          <button id="btn-real-mode" class="px-3 py-1 bg-transparent text-gray-400 hover:text-white font-bold text-xs rounded transition-colors" data-active="false">REAL-TIME (λ≈0.0001)</button>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4 w-64 justify-end">
+        <div class="text-xs text-right font-mono">
+          <div class="text-gray-400">Mental Uptime</div>
+          <div id="uptime-text" class="text-xl font-bold text-ops-accent">100.0%</div>
+        </div>
+        <div class="w-16 h-16 rounded-full border-4 border-gray-800 flex items-center justify-center relative overflow-hidden">
+          <div class="absolute inset-0 bg-ops-accent opacity-20 neon-green-glow" id="uptime-glow"></div>
+          <svg class="absolute inset-0 w-full h-full -rotate-90">
+            <circle cx="32" cy="32" r="28" fill="none" stroke="#222" stroke-width="8" />
+            <circle id="uptime-ring" cx="32" cy="32" r="28" fill="none" stroke="#00ffcc" stroke-width="8" stroke-dasharray="176" stroke-dashoffset="0" class="transition-all duration-1000" />
+          </svg>
+        </div>
+      </div>
+    </header>
+
+    <main class="flex-1 min-h-0 flex gap-4 w-full h-full">
+      
+      <!-- CLI Terminal -->
+      <section class="glass-panel w-[30%] min-w-[300px] flex flex-col p-4 gap-2">
+        <div class="text-xs font-mono text-gray-400 border-b border-gray-700 pb-2 mb-2 uppercase flex justify-between">
+          <span>Psych-SOAR Terminal</span>
+          <span id="system-status" class="text-ops-accent">SYSTEM_IDLE</span>
+        </div>
+        
+        <div id="cli-log" class="flex-1 font-mono text-sm overflow-y-auto break-words flex flex-col justify-end space-y-2 pb-2">
+          <div class="text-gray-500 italic">REASONING ENGINE READY...</div>
+        </div>
+        
+        <div class="mt-auto border border-gray-700 rounded-md bg-black/50 p-2 flex font-mono border-l-4 border-l-ops-accent neon-green-glow transition-all duration-300">
+          <span class="text-ops-accent mr-2">></span>
+          <input id="cli-input" type="text" class="bg-transparent outline-none w-full text-white placeholder-gray-600" placeholder="Awaiting distortion payload..." autocomplete="off" />
+        </div>
+      </section>
+
+      <!-- Threat Board -->
+      <section class="glass-panel flex-1 flex flex-col relative overflow-hidden p-4">
+        <div class="text-xs font-mono text-gray-400 text-center uppercase tracking-[0.2em] mb-4">Live Threat Physics Sandbox</div>
+        <div id="threat-board" class="w-full h-full relative" style="perspective: 1000px;">
+          <!-- Decaying cards -->
+        </div>
+      </section>
+
+      <!-- Analytics & Tools -->
+      <section class="glass-panel w-[25%] min-w-[300px] flex flex-col p-4 gap-4">
+        <div class="text-xs font-mono text-gray-400 border-b border-gray-700 pb-2 uppercase">Analytics & SOAR Metrics</div>
+        
+        <div class="h-48 w-full p-2 bg-black/50 rounded-lg relative mb-2">
+          <canvas id="ratio-chart"></canvas>
+        </div>
+
+        <!-- Pressure Gauge -->
+        <div class="p-3 bg-black/40 rounded border border-white/5">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-[10px] font-mono text-gray-400 uppercase">System Pressure</span>
+            <span id="pressure-text" class="text-xs font-bold text-ops-accent">0%</span>
+          </div>
+          <div class="w-full h-2 bg-gray-900 rounded-full overflow-hidden">
+            <div id="pressure-fill" class="pressure-bar-fill w-0 h-full bg-ops-accent"></div>
+          </div>
+        </div>
+
+        <div class="flex-1 flex flex-col justify-end mt-4">
+            <button id="btn-recalibrate" class="w-full py-3 bg-ops-accent/10 border border-ops-accent/30 rounded text-ops-accent font-bold hover:bg-ops-accent/20 hover:neon-green-glow transition-all active:scale-95 text-sm uppercase font-mono">
+              Execute: Success-Drop Recalibration
+            </button>
+            <p class="text-[10px] text-gray-500 mt-2 text-center">Injects validated success metrics to sync Turso Cloud Node.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- SOP Modal Upgrade (Yellow Reasoning Engine) -->
+    <div id="sop-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+      <div id="sop-card" class="bg-black/90 border border-ops-sop rounded-xl shadow-2xl neon-yellow-glow p-6 max-w-lg w-full transform transition-all duration-500 opacity-0 scale-95 translate-y-10">
+        <div class="font-mono text-ops-sop text-xl font-bold uppercase mb-4 flex items-center justify-between">
+          <span class="flex items-center gap-3">
+            <div class="w-3 h-3 bg-ops-sop animate-pulse"></div>
+            Technical Directive
+          </span>
+          <span id="sop-risk-badge" class="text-xs bg-ops-sop/20 px-2 py-1 border border-ops-sop">RISK: 0</span>
+        </div>
+        <div id="sop-ttp-name" class="text-xs font-mono text-ops-sop mb-2 uppercase tracking-widest">TTP: IDENTIFYING...</div>
+        <div id="sop-content" class="text-sm font-sans mb-6 text-gray-300 border-l-2 border-ops-sop pl-4 space-y-2">
+          <!-- AI Steps -->
+        </div>
+        <div class="flex justify-end font-mono">
+          <button id="btn-dismiss-sop" class="px-6 py-2 bg-ops-sop text-black font-bold rounded shadow-lg hover:bg-yellow-400 hover:shadow-[0_0_15px_rgba(234,179,8,0.8)] transition-all">RESOLVE TICKET</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
